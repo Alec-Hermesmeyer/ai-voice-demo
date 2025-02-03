@@ -49,7 +49,7 @@ interface Message {
 }
 
 // Default voice settings
-const VOICE_ID = "21m00Tcm4TlvDq8ikWAM" // Rachel voice
+const VOICE_ID = "1SM7GgM6IMuvQlz2BwM3" // Mark voice
 const VOICE_SETTINGS = {
   stability: 0.75,
   similarity_boost: 0.75,
