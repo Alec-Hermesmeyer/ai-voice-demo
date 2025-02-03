@@ -92,7 +92,7 @@ export function VoiceChat() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
-  const [recognition, setRecognition] = useState<webkitSpeechRecognition | null>(null) // Updated type
+  const [recognition, setRecognition] = useState<typeof window.webkitSpeechRecognition | null>(null)
   const [currentSpeaker, setCurrentSpeaker] = useState<string>("")
 
   useEffect(() => {
@@ -125,8 +125,8 @@ export function VoiceChat() {
 
   useEffect(() => {
     if (typeof window !== "undefined" && "webkitSpeechRecognition" in window) {
-      // @ts-ignore - webkit speech recognition is not in the types
-      const recognition = new webkitSpeechRecognition()
+        const Recognition = window.webkitSpeechRecognition
+        const recognition = new Recognition()
       recognition.continuous = true
       recognition.interimResults = true
       recognition.lang = "en-US"
@@ -197,7 +197,7 @@ export function VoiceChat() {
     // Remove all messages after this one
     setMessages(messages.slice(0, messageIndex + 1))
     // Retry the request
-    await handleSubmit(null, messageToRetry.content)
+    await handleSubmit(undefined, messageToRetry.content)
   }
 
   const startRecording = async () => {

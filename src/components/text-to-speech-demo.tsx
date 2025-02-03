@@ -22,6 +22,7 @@ const ELEVEN_LABS_VOICES = [
   { voice_id: "pNInz6obpgDQGcFmaJgB", name: "Adam" },
   { voice_id: "yoZ06aMxZJJ28mfd3POQ", name: "Sam" },
   { voice_id: "1SM7GgM6IMuvQlz2BwM3", name: "Mark" },
+  { voice_id: "kPzsL2i3teMYv0FxEYQ6", name: "Brittney" },
 ]
 
 export function TextToSpeechDemo() {
