@@ -84,21 +84,7 @@ export function TextToSpeechDemo() {
         </div>
 
         <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Voice Selection</Label>
-            <Select value={selectedVoice} onValueChange={setSelectedVoice}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select a voice" />
-              </SelectTrigger>
-              <SelectContent>
-                {ELEVEN_LABS_VOICES.map((voice) => (
-                  <SelectItem key={voice.voice_id} value={voice.voice_id}>
-                    {voice.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+         
 
           <div className="space-y-2">
             <Label>Stability ({stability[0]})</Label>
@@ -122,6 +108,21 @@ export function TextToSpeechDemo() {
               step={0.05}
               className="[&_[role=slider]]:h-4 [&_[role=slider]]:w-4"
             />
+          </div>
+          <div className="space-y-2">
+            <Label>Voice Selection</Label>
+            <Select value={selectedVoice} onValueChange={setSelectedVoice}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a voice" />
+              </SelectTrigger>
+              <SelectContent>
+                {ELEVEN_LABS_VOICES.map((voice) => (
+                  <SelectItem key={voice.voice_id} value={voice.voice_id}>
+                    {voice.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <Button className="w-full" onClick={handleTextToSpeech} disabled={!text || isGenerating}>
