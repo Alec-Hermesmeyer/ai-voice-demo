@@ -8,7 +8,9 @@ const openai = new OpenAI({
 export async function POST(req: Request) {
   try {
     const formData = await req.formData()
-    const file = formData.get("file") as File
+    const fileBlob = formData.get("file") as Blob
+    const file = new File([fileBlob], "audio.wav", { type: fileBlob.type, lastModified: Date.now() })
+    const speakerData = formData.get("speakerData") as string
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 })
@@ -19,9 +21,16 @@ export async function POST(req: Request) {
       model: "whisper-1",
     })
 
-    return NextResponse.json({ text: transcription.text })
+    // If speaker data was provided, include it in the response
+    const speakerInfo = speakerData ? JSON.parse(speakerData) : null
+
+    return NextResponse.json({
+      text: transcription.text,
+      speaker: speakerInfo,
+    })
   } catch (error) {
     console.error("Error in speech-to-text:", error)
     return NextResponse.json({ error: "Failed to convert speech to text" }, { status: 500 })
   }
 }
+
