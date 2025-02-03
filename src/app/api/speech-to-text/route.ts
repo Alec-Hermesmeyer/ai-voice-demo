@@ -2,20 +2,24 @@ import { NextResponse } from "next/server"
 import OpenAI from "openai"
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY!,
 })
 
 export async function POST(req: Request) {
   try {
     const formData = await req.formData()
-    const file = formData.get("file") as Blob
+    const blob = formData.get("file") as Blob
 
-    if (!file) {
+    if (!blob) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 })
     }
 
+    // ✅ Convert Blob to File (Fixes the Type Error)
+    const file = new File([blob], "audio.webm", { type: blob.type })
+
+    // Send the converted file to OpenAI Whisper API
     const transcription = await openai.audio.transcriptions.create({
-      file: file,
+      file: file, // 🔥 Fix: Now a valid File type
       model: "whisper-1",
     })
 

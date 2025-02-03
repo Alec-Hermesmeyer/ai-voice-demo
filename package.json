@@ -2,6 +2,7 @@
   "name": "my-app",
   "version": "0.1.0",
   "private": true,
+  "proxy": "https://bg-backend-app1.azurewebsites.net",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
@@ -9,19 +10,36 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@radix-ui/react-avatar": "^1.1.2",
+    "@radix-ui/react-dialog": "^1.1.5",
+    "@radix-ui/react-dropdown-menu": "^2.1.5",
+    "@radix-ui/react-label": "^2.1.1",
+    "@radix-ui/react-progress": "^1.1.1",
+    "@radix-ui/react-scroll-area": "^1.2.2",
+    "@radix-ui/react-select": "^2.1.5",
+    "@radix-ui/react-separator": "^1.1.1",
+    "@radix-ui/react-slider": "^1.2.2",
+    "@radix-ui/react-switch": "^1.1.2",
+    "@radix-ui/react-tabs": "^1.1.2",
+    "@radix-ui/react-toast": "^1.2.5",
+    "class-variance-authority": "^0.7.1",
+    "lucide-react": "^0.474.0",
+    "next": "15.1.6",
+    "openai": "^4.82.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "next": "15.1.6"
+    "recharts": "^2.15.1",
+    "tailwind-merge": "^3.0.1"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@eslint/eslintrc": "^3",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "postcss": "^8",
-    "tailwindcss": "^3.4.1",
     "eslint": "^9",
     "eslint-config-next": "15.1.6",
-    "@eslint/eslintrc": "^3"
+    "postcss": "^8",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5"
   }
 }
