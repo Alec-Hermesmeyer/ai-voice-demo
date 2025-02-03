@@ -6,58 +6,70 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
+    // Ensure a valid request format
     if (!body.message) {
-      return NextResponse.json({ error: "Missing 'message' field" }, { status: 400 });
+      console.error("Proxy Error: Missing 'message' in request body:", body);
+      return NextResponse.json({ error: "Missing required 'message' field" }, { status: 400 });
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000); // 9 seconds
-
+    // Open a connection to the backend API
     const response = await fetch(BASE_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
       body: JSON.stringify({
-        query: body.message,
-        history: body.history || [],
+        query: body.message,  // ✅ Keep "message"
+        history: body.history || [], // ✅ Ensure history is always an array
       }),
-      signal: controller.signal,
     });
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      throw new Error(`Backend error: ${response.status}`);
+    if (!response.ok || !response.body) {
+      throw new Error(`Backend responded with status ${response.status}`);
     }
 
-    const data = await response.json();
+    // **🚀 Streaming Response**
+    const encoder = new TextEncoder();
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        const reader = response.body?.getReader();
+        if (!reader) return;
 
-    return NextResponse.json(
-      { response: data.answer || data.response || "No response" },
-      { headers: { "Access-Control-Allow-Origin": "*" } }
-    );
+        // Read data chunks from backend and stream them
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value); // Push the data to the stream
+        }
+        controller.close();
+      },
+    });
+
+    return new NextResponse(readableStream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
+    });
 
   } catch (error) {
-    const isTimeout = (error as Error).name === 'AbortError';
-    return NextResponse.json(
-      {
-        error: isTimeout ? "Request timed out" : "Backend communication failed",
-        response: isTimeout ? "Server response timed out. Please try again." 
-                            : "Unable to connect to the server.",
-      },
-      {
-        status: isTimeout ? 504 : 500,
-        headers: { "Access-Control-Allow-Origin": "*" }
-      }
-    );
+    console.error("Proxy error:", error);
+    return NextResponse.json({
+      error: "Failed to communicate with backend",
+      response: "Unable to connect to the server. Please try again.",
+    }, { status: 500 });
   }
 }
 
+// Handle OPTIONS requests for CORS
 export async function OPTIONS() {
   return NextResponse.json({}, {
     headers: {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
     },
   });
 }

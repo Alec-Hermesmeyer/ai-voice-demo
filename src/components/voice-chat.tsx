@@ -1,19 +1,22 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Mic, Square, SendHorizontal, Loader2, Volume2, VolumeX, HelpCircle } from "lucide-react"
+import { Mic, Square, SendHorizontal, Loader2, Volume2, VolumeX, Bot, User, MessageSquare } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToast } from "@/components/ui/use-toast"
 import { AudioVisualizer } from "./audio-visualizer"
 import { AudioPlayer } from "./audio-player"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 interface Message {
   role: "user" | "assistant"
   content: string
+  timestamp: Date
 }
 
 // Default voice settings
@@ -48,7 +51,15 @@ export function VoiceChat() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [scrollRef.current]) //Corrected useEffect dependency
+  }, [scrollRef]) // Corrected dependency
+
+  const formatTime = (date: Date) => {
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "numeric",
+      hour12: true,
+    }).format(date)
+  }
 
   const startRecording = async () => {
     try {
@@ -152,7 +163,14 @@ export function VoiceChat() {
     setInput("")
 
     // Add user message immediately
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }])
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "user",
+        content: userMessage,
+        timestamp: new Date(),
+      },
+    ])
 
     try {
       setIsProcessing(true)
@@ -182,6 +200,7 @@ export function VoiceChat() {
           {
             role: "assistant",
             content: data.response,
+            timestamp: new Date(),
           },
         ])
 
@@ -204,6 +223,7 @@ export function VoiceChat() {
         {
           role: "assistant",
           content: "I apologize, but I'm having trouble connecting. Please try again.",
+          timestamp: new Date(),
         },
       ])
     } finally {
@@ -212,81 +232,154 @@ export function VoiceChat() {
   }
 
   return (
-    <Card className="w-full max-w-2xl mx-auto">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle>Voice Chat</CardTitle>
-        <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" title="Sample questions">
-                <HelpCircle className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {SAMPLE_QUESTIONS.map((question) => (
-                <DropdownMenuItem key={question} onClick={() => setInput(question)}>
-                  {question}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setAutoSpeak(!autoSpeak)}
-            title={autoSpeak ? "Disable auto-speak" : "Enable auto-speak"}
-          >
-            {autoSpeak ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-          </Button>
+    <Card className="w-full max-w-3xl mx-auto">
+      <CardHeader className="border-b">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="h-5 w-5 text-primary" />
+            <div>
+              <CardTitle>Voice Chat</CardTitle>
+              <CardDescription>Chat with AI using voice or text</CardDescription>
+            </div>
+          </div>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" onClick={() => setAutoSpeak(!autoSpeak)}>
+                  {autoSpeak ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{autoSpeak ? "Disable auto-speak" : "Enable auto-speak"}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <ScrollArea className="h-[500px] p-4 border rounded-lg">
-          <div className="space-y-4" ref={scrollRef}>
-            {messages.map((message, index) => (
-              <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`rounded-lg px-4 py-2 max-w-[80%] ${
-                    message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
-                  }`}
-                >
-                  {message.content}
-                </div>
+      <CardContent className="p-0">
+        <div className="flex flex-col h-[700px]">
+          <div className="flex-1 border-b">
+            <ScrollArea className="h-full">
+              <div className="flex flex-col gap-6 p-4" ref={scrollRef}>
+                {messages.map((message, index) => (
+                  <div key={index} className={`flex gap-3 ${message.role === "user" ? "flex-row-reverse" : ""}`}>
+                    <Avatar className="h-8 w-8">
+                      {message.role === "assistant" ? (
+                        <>
+                          <AvatarImage src="/bot-avatar.png" alt="AI Assistant" />
+                          <AvatarFallback>
+                            <Bot className="h-4 w-4" />
+                          </AvatarFallback>
+                        </>
+                      ) : (
+                        <>
+                          <AvatarImage src="/user-avatar.png" alt="User" />
+                          <AvatarFallback>
+                            <User className="h-4 w-4" />
+                          </AvatarFallback>
+                        </>
+                      )}
+                    </Avatar>
+                    <div className={`group flex flex-col gap-1 ${message.role === "user" ? "items-end" : ""}`}>
+                      <div
+                        className={`rounded-lg px-4 py-2 max-w-[85%] ${
+                          message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
+                        }`}
+                      >
+                        {message.content}
+                      </div>
+                      <span className="text-xs text-muted-foreground px-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {formatTime(message.timestamp)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                {isProcessing && (
+                  <div className="flex gap-3">
+                    <Avatar className="h-8 w-8">
+                      <AvatarFallback>
+                        <Bot className="h-4 w-4" />
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="bg-muted rounded-lg px-4 py-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    </div>
+                  </div>
+                )}
               </div>
-            ))}
+            </ScrollArea>
           </div>
-        </ScrollArea>
 
-        {isRecording && stream && (
-          <div className="p-4 border rounded-lg">
-            <AudioVisualizer stream={stream} isRecording={isRecording} />
+          <div className="p-4 space-y-4">
+            {SAMPLE_QUESTIONS.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {SAMPLE_QUESTIONS.map((question) => (
+                  <Badge
+                    key={question}
+                    variant="secondary"
+                    className="cursor-pointer hover:bg-secondary/80 transition-colors"
+                    onClick={() => setInput(question)}
+                  >
+                    {question}
+                  </Badge>
+                ))}
+              </div>
+            )}
+
+            {isRecording && stream && (
+              <div className="p-4 border rounded-lg bg-muted/50">
+                <AudioVisualizer stream={stream} isRecording={isRecording} />
+              </div>
+            )}
+
+            {audioUrl && (
+              <div className="border rounded-lg p-4 bg-muted/50">
+                <AudioPlayer src={audioUrl} onEnded={() => setIsSpeaking(false)} />
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="flex items-center gap-2">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={isRecording ? "destructive" : "outline"}
+                      size="icon"
+                      onClick={isRecording ? stopRecording : startRecording}
+                      disabled={isProcessing}
+                      className="shrink-0"
+                    >
+                      {isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{isRecording ? "Stop recording" : "Start recording"}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
+              <Input
+                placeholder="Type a message or use voice input..."
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                disabled={isProcessing}
+                className="flex-1"
+              />
+
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button type="submit" disabled={!input.trim() || isProcessing} className="shrink-0">
+                      {isProcessing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <SendHorizontal className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Send message</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </form>
           </div>
-        )}
-
-        {audioUrl && <AudioPlayer src={audioUrl} onEnded={() => setIsSpeaking(false)} className="pt-4" />}
-
-        <form onSubmit={handleSubmit} className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={isRecording ? stopRecording : startRecording}
-            disabled={isProcessing}
-          >
-            {isRecording ? <Square className="h-4 w-4 text-destructive" /> : <Mic className="h-4 w-4" />}
-          </Button>
-
-          <Input
-            placeholder="Type a message or use voice input..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            disabled={isProcessing}
-          />
-
-          <Button type="submit" disabled={!input.trim() || isProcessing}>
-            {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
-          </Button>
-        </form>
+        </div>
       </CardContent>
     </Card>
   )
