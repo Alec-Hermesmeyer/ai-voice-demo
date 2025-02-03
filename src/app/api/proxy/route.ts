@@ -6,78 +6,58 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    // Ensure a valid request format
     if (!body.message) {
-      console.error("Proxy Error: Missing 'message' in request body:", body);
-      return NextResponse.json({ error: "Missing required 'message' field" }, { status: 400 });
+      return NextResponse.json({ error: "Missing 'message' field" }, { status: 400 });
     }
 
-    // Setup fetch timeout (Abort after 25s)
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000); // 25 seconds
-
-    console.log("Forwarding request to:", BASE_URL, "with body:", body);
+    const timeout = setTimeout(() => controller.abort(), 60000); // 9 seconds
 
     const response = await fetch(BASE_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "X-Forwarded-Proto": "https",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        query: body.message, // ✅ Keep "message"
-        history: body.history || [], // ✅ Ensure history is always an array
+        query: body.message,
+        history: body.history || [],
       }),
-      signal: controller.signal, // Attach timeout controller
+      signal: controller.signal,
     });
 
-    clearTimeout(timeout); // ✅ Ensure timeout clears if fetch completes
-
-    // Log response status
-    console.log("Backend status:", response.status);
-    const responseText = await response.text();
-    console.log("Backend raw response:", responseText);
+    clearTimeout(timeout);
 
     if (!response.ok) {
-      console.error("Backend error:", response.status, response.statusText);
-      throw new Error(`Backend responded with status ${response.status}`);
+      throw new Error(`Backend error: ${response.status}`);
     }
 
-    // Parse backend response safely
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (jsonError) {
-      console.error("JSON parsing error:", jsonError, responseText);
-      return NextResponse.json({
-        error: "Invalid response from backend",
-        response: "The server returned an unreadable response.",
-      }, { status: 500 });
-    }
+    const data = await response.json();
 
-    console.log("Parsed backend response:", data);
-
-    return NextResponse.json({
-      response: data.answer || data.response || "No valid response received.",
-    });
+    return NextResponse.json(
+      { response: data.answer || data.response || "No response" },
+      { headers: { "Access-Control-Allow-Origin": "*" } }
+    );
 
   } catch (error) {
-    console.error("Proxy error:", error);
-    return NextResponse.json({
-      error: "Failed to communicate with backend",
-      response: "Unable to connect to the server. Please try again.",
-    }, { status: 500 });
+    const isTimeout = (error as Error).name === 'AbortError';
+    return NextResponse.json(
+      {
+        error: isTimeout ? "Request timed out" : "Backend communication failed",
+        response: isTimeout ? "Server response timed out. Please try again." 
+                            : "Unable to connect to the server.",
+      },
+      {
+        status: isTimeout ? 504 : 500,
+        headers: { "Access-Control-Allow-Origin": "*" }
+      }
+    );
   }
 }
 
-// Handle OPTIONS requests for CORS
 export async function OPTIONS() {
   return NextResponse.json({}, {
     headers: {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
     },
   });
 }
