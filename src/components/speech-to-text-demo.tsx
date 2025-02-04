@@ -23,7 +23,7 @@ export function SpeechToTextDemo() {
   const [correctedTranscript, setCorrectedTranscript] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
   const recognition = useRef<SpeechRecognition | null>(null)
-  const correctionTimeout = useRef<NodeJS.Timeout>()
+  const correctionTimeout = useRef<NodeJS.Timeout | null>(null)
   const lastFinalTranscript = useRef<string>("") // Track last finalized transcript
   const interimBuffer = useRef<string>("") // Buffer for interim results
   const bufferTimeout = useRef<NodeJS.Timeout | null>(null) // Timer for smoother updates
