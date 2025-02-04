@@ -10,11 +10,19 @@ export async function POST(req: Request) {
   try {
     const { text, voice_id, stability, similarity_boost } = await req.json()
 
+    // Add logging to debug the request
+    console.log("Text-to-speech request:", {
+      text,
+      voice_id,
+      stability,
+      similarity_boost,
+    })
+
     const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice_id}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "xi-api-key": ELEVEN_LABS_API_KEY!,
+        "xi-api-key": ELEVEN_LABS_API_KEY as string,
       },
       body: JSON.stringify({
         text,
@@ -26,8 +34,12 @@ export async function POST(req: Request) {
       }),
     })
 
+    // Log the response status and any error details
+    console.log("ElevenLabs API response status:", response.status)
     if (!response.ok) {
-      throw new Error("Failed to convert text to speech")
+      const errorText = await response.text()
+      console.error("ElevenLabs API error:", errorText)
+      throw new Error(`Failed to convert text to speech: ${errorText}`)
     }
 
     const audioBuffer = await response.arrayBuffer()
@@ -40,6 +52,10 @@ export async function POST(req: Request) {
     })
   } catch (error) {
     console.error("Error in text-to-speech:", error)
-    return NextResponse.json({ error: "Failed to convert text to speech" }, { status: 500 })
+    return NextResponse.json(
+      { error: "Failed to convert text to speech", details: error instanceof Error ? error.message : "Unknown error" },
+      { status: 500 },
+    )
   }
 }
+
