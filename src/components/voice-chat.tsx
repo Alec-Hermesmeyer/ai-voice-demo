@@ -91,11 +91,13 @@ export function VoiceChat() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
       if (SpeechRecognition) {
         recognition.current = new SpeechRecognition()
-        recognition.current.continuous = true
-        recognition.current.interimResults = true
-        recognition.current.lang = "en-US"
+        if (recognition.current) {
+          recognition.current.continuous = true
+          recognition.current.interimResults = true
+          recognition.current.lang = "en-US"
+        }
 
-        recognition.current.onresult = (event) => {
+        recognition.current!.onresult = (event) => {
           let finalTranscript = lastFinalTranscript.current
           let interimTranscript = ""
 
@@ -115,7 +117,7 @@ export function VoiceChat() {
           setInput(`${finalTranscript} ${interimTranscript}`.trim())
         }
 
-        recognition.current.onerror = (event) => {
+        recognition.current!.onerror = (event) => {
           console.error("Speech recognition error:", event.error)
           toast({
             title: "Error",
