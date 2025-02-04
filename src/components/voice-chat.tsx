@@ -1,24 +1,37 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Mic, Square, SendHorizontal, Loader2, Volume2, VolumeX, MessageSquare, RefreshCw } from "lucide-react"
+import { Mic, Square, SendHorizontal, Loader2, Volume2, VolumeX, MessageSquare, RefreshCw, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardDescription } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToast } from "@/components/ui/use-toast"
 import { AudioVisualizer } from "./audio-visualizer"
 import { motion, AnimatePresence } from "framer-motion"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 
-// Constants
-const MAX_RETRIES = 3
-const CACHE_KEY = "voice_chat_messages"
-const MAX_MESSAGE_LENGTH = 1000
-const VOICE_ID = "21m00Tcm4TlvDq8ikWAM" // Rachel voice
-const VOICE_SETTINGS = {
-  stability: 0.75,
-  similarity_boost: 0.75,
+
+declare global {
+  interface Window {
+    SpeechRecognition: any
+    webkitSpeechRecognition: any
+  }
 }
+
+const MAX_MESSAGE_LENGTH = 1000
+const CACHE_KEY = "voice_chat_messages"
+const MAX_RETRIES = 3
 
 const SAMPLE_QUESTIONS = [
   "What policies are available to review?",
@@ -55,117 +68,96 @@ export function VoiceChat() {
   const [input, setInput] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
-  const [stream, setStream] = useState<MediaStream>()
-  const [audioUrl, setAudioUrl] = useState<string>("")
-  const [isSpeaking, setIsSpeaking] = useState(false)
   const [autoSpeak, setAutoSpeak] = useState(true)
-  const mediaRecorder = useRef<MediaRecorder | null>(null)
-  const audioChunks = useRef<Blob[]>([])
-  const { toast } = useToast()
+  const [stream, setStream] = useState<MediaStream>()
+
+  const recognition = useRef<SpeechRecognition | null>(null)
+  const lastFinalTranscript = useRef<string>("")
   const scrollRef = useRef<HTMLDivElement>(null)
+  const { toast } = useToast()
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [scrollRef]) // Corrected dependency
+  }, [scrollRef])
 
   useEffect(() => {
     localStorage.setItem(CACHE_KEY, JSON.stringify(messages))
   }, [messages])
 
-  const startRecording = async () => {
-    try {
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      setStream(audioStream)
-      mediaRecorder.current = new MediaRecorder(audioStream)
-      audioChunks.current = []
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+      if (SpeechRecognition) {
+        recognition.current = new SpeechRecognition()
+        recognition.current.continuous = true
+        recognition.current.interimResults = true
+        recognition.current.lang = "en-US"
 
-      mediaRecorder.current.ondataavailable = (event) => {
-        audioChunks.current.push(event.data)
+        recognition.current.onresult = (event) => {
+          let finalTranscript = lastFinalTranscript.current
+          let interimTranscript = ""
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              finalTranscript += " " + event.results[i][0].transcript
+              // When we get final results, trigger grammar correction
+              correctGrammar(finalTranscript.trim())
+            } else {
+              interimTranscript = event.results[i][0].transcript
+            }
+          }
+
+          lastFinalTranscript.current = finalTranscript.trim()
+
+          // Immediately update input with current transcription
+          setInput(`${finalTranscript} ${interimTranscript}`.trim())
+        }
+
+        recognition.current.onerror = (event) => {
+          console.error("Speech recognition error:", event.error)
+          toast({
+            title: "Error",
+            description: `Speech recognition error: ${event.error}`,
+            variant: "destructive",
+          })
+          stopRecording()
+        }
+      } else {
+        toast({
+          title: "Error",
+          description: "Speech recognition is not supported in this browser.",
+          variant: "destructive",
+        })
       }
+    }
 
-      mediaRecorder.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunks.current, { type: "audio/wav" })
-        await handleSpeechToText(audioBlob)
-      }
+    return () => stopRecording()
+  }, [toast])
 
-      mediaRecorder.current.start()
+  const clearChat = () => {
+    setMessages([WELCOME_MESSAGE])
+    localStorage.setItem(CACHE_KEY, JSON.stringify([WELCOME_MESSAGE]))
+    toast({
+      title: "Chat cleared",
+      description: "All messages have been cleared.",
+    })
+  }
+
+  const startRecording = () => {
+    if (recognition.current) {
+      recognition.current.start()
       setIsRecording(true)
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Could not access microphone. Please check permissions.",
-        variant: "destructive",
-      })
+      lastFinalTranscript.current = ""
+      setInput("")
     }
   }
 
   const stopRecording = () => {
-    if (mediaRecorder.current && isRecording) {
-      mediaRecorder.current.stop()
-      stream?.getTracks().forEach((track) => track.stop())
-      setStream(undefined)
+    if (recognition.current) {
+      recognition.current.stop()
       setIsRecording(false)
-    }
-  }
-
-  const handleSpeechToText = async (audioBlob: Blob) => {
-    const formData = new FormData()
-    formData.append("file", audioBlob)
-
-    try {
-      setIsProcessing(true)
-      const response = await fetch("/api/speech-to-text", {
-        method: "POST",
-        body: formData,
-      })
-
-      if (!response.ok) throw new Error("Failed to convert speech to text")
-
-      const data = await response.json()
-      setInput(data.text)
-      await handleSubmit(undefined, data.text)
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to convert speech to text. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsProcessing(false)
-    }
-  }
-
-  const speakResponse = async (text: string) => {
-    try {
-      setIsSpeaking(true)
-      const response = await fetch("/api/text-to-speech", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text,
-          voice_id: VOICE_ID,
-          stability: VOICE_SETTINGS.stability,
-          similarity_boost: VOICE_SETTINGS.similarity_boost,
-        }),
-      })
-
-      if (!response.ok) throw new Error("Failed to convert text to speech")
-
-      const audioBlob = await response.blob()
-      const url = URL.createObjectURL(audioBlob)
-      setAudioUrl(url)
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to convert text to speech. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsSpeaking(false)
     }
   }
 
@@ -173,7 +165,6 @@ export function VoiceChat() {
     const messageToRetry = messages[messageIndex]
     if (messageToRetry.role !== "user") return
 
-    // Remove all messages after this one
     setMessages(messages.slice(0, messageIndex + 1))
     await handleSubmit(undefined, messageToRetry.content)
   }
@@ -212,20 +203,16 @@ export function VoiceChat() {
       if (!response.ok) throw new Error("Failed to get response")
 
       const data = await response.json()
-      const assistantMessage = {
-        id: Math.random().toString(36).substr(2, 9),
-        role: "assistant" as const,
-        content: data.response,
-        timestamp: new Date(),
-        status: "delivered" as const,
-      }
-
-      setMessages((prev) => [...prev, assistantMessage])
-
-      // Auto-speak the response if enabled
-      if (autoSpeak) {
-        await speakResponse(data.response)
-      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Math.random().toString(36).substr(2, 9),
+          role: "assistant",
+          content: data.response,
+          timestamp: new Date(),
+          status: "delivered",
+        },
+      ])
     } catch (error) {
       console.error("Chat error:", error)
 
@@ -241,6 +228,32 @@ export function VoiceChat() {
       }
     } finally {
       setIsProcessing(false)
+    }
+  }
+
+  const correctGrammar = async (text: string) => {
+    if (!text.trim()) return
+
+    try {
+      const response = await fetch("/api/correct-grammar", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text }),
+      })
+
+      if (!response.ok) throw new Error("Grammar correction failed")
+
+      const data = await response.json()
+      if (data.corrected) {
+        setInput(data.corrected)
+        lastFinalTranscript.current = data.corrected
+      }
+    } catch (error) {
+      console.error("Grammar correction error:", error)
+      // On error, keep the uncorrected text
+      setInput(text)
     }
   }
 
@@ -263,12 +276,31 @@ export function VoiceChat() {
             >
               {autoSpeak ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
             </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="icon" title="Clear chat">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Clear chat history?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will permanently delete all messages. This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={clearChat}>Clear</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
       </CardHeader>
       <CardContent className="p-0">
         <div className="flex flex-col h-[calc(100%-4rem)]">
-          <ScrollArea className="h-full max-h-[calc(100vh-20rem)] min-h-[400px]">
+          <ScrollArea className="flex-1">
             <div className="flex flex-col gap-6 p-4" ref={scrollRef}>
               <AnimatePresence initial={false}>
                 {messages.map((message, index) => (
@@ -305,7 +337,7 @@ export function VoiceChat() {
 
           <div className="p-4 space-y-4 flex-shrink-0">
             {SAMPLE_QUESTIONS.length > 0 && (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 justify-center">
                 {SAMPLE_QUESTIONS.map((question) => (
                   <Button
                     key={question}
@@ -339,15 +371,21 @@ export function VoiceChat() {
               </Button>
 
               <div className="relative flex-1">
-                <Input
+                <Textarea
                   placeholder="Type a message..."
                   value={input}
                   onChange={(e) => setInput(e.target.value.slice(0, MAX_MESSAGE_LENGTH))}
                   disabled={isProcessing}
-                  className="pr-12"
+                  className="pr-12 mt-4 min-h-[44px] max-h-[200px] resize-none overflow-y-auto pb-12"
                   maxLength={MAX_MESSAGE_LENGTH}
+                  rows={1}
+                  onInput={(e) => {
+                    const target = e.target as HTMLTextAreaElement
+                    target.style.height = "0"
+                    target.style.height = `${target.scrollHeight}px`
+                  }}
                 />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                <span className="absolute right-3 top-8 text-xs text-muted-foreground">
                   {input.length}/{MAX_MESSAGE_LENGTH}
                 </span>
               </div>

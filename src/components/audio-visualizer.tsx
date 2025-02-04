@@ -72,6 +72,6 @@ export function AudioVisualizer({ stream, isRecording }: AudioVisualizerProps) {
     }
   }, [stream, isRecording])
 
-  return <canvas ref={canvasRef} width={300} height={100} className="w-full rounded-lg border bg-white" />
+  return <canvas ref={canvasRef} width={300} height={20} className="w-full rounded-lg border bg-white" />
 }
 

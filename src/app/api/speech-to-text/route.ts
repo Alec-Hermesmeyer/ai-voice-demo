@@ -5,32 +5,51 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
+export const runtime = "nodejs"
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData()
-    const fileBlob = formData.get("file") as Blob
-    const file = new File([fileBlob], "audio.wav", { type: fileBlob.type, lastModified: Date.now() })
-    const speakerData = formData.get("speakerData") as string
+    const audioBlob = formData.get("chunk") as Blob
+    const audioFile = new File([audioBlob], "audio.wav", { type: audioBlob.type, lastModified: Date.now() })
 
-    if (!file) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 })
+    if (!audioBlob) {
+      console.error("No audio chunk provided")
+      return NextResponse.json({ error: "No audio chunk provided" }, { status: 400 })
     }
 
+    console.log("Received audio chunk:", {
+      size: audioBlob.size,
+      type: audioBlob.type,
+    })
+
+    if (audioBlob.size === 0) {
+      console.error("Empty audio chunk received")
+      return NextResponse.json({ error: "Empty audio chunk received" }, { status: 400 })
+    }
+
+    // Get raw transcription from Whisper
     const transcription = await openai.audio.transcriptions.create({
-      file: file,
+      file: audioFile,
       model: "whisper-1",
     })
 
-    // If speaker data was provided, include it in the response
-    const speakerInfo = speakerData ? JSON.parse(speakerData) : null
+    console.log("Transcription received:", transcription.text)
 
     return NextResponse.json({
       text: transcription.text,
-      speaker: speakerInfo,
+      success: true,
     })
   } catch (error) {
-    console.error("Error in speech-to-text:", error)
-    return NextResponse.json({ error: "Failed to convert speech to text" }, { status: 500 })
+    console.error("Transcription error:", error)
+    return NextResponse.json(
+      {
+        error: "Transcription failed",
+        details: error instanceof Error ? error.message : "Unknown error",
+        success: false,
+      },
+      { status: 500 },
+    )
   }
 }
 

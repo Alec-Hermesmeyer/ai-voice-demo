@@ -1,61 +1,71 @@
 import { NextResponse } from "next/server"
+import OpenAI from "openai"
 
-const ELEVEN_LABS_API_KEY = process.env.ELEVEN_LABS_API_KEY
-
-if (!ELEVEN_LABS_API_KEY) {
-  throw new Error("Missing ELEVEN_LABS_API_KEY environment variable")
-}
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+})
 
 export async function POST(req: Request) {
+  const formData = await req.formData()
+  const fileBlob = formData.get("file") as Blob
+  const file = new File([fileBlob], "audio.wav", { type: fileBlob.type, lastModified: Date.now() })
+  const isStream = formData.get("stream") === "true"
+
+  if (!file) {
+    return NextResponse.json({ error: "No file provided" }, { status: 400 })
+  }
+
   try {
-    const { text, voice_id, stability, similarity_boost } = await req.json()
+    if (isStream) {
+      // Set up streaming response
+      const encoder = new TextEncoder()
+      const stream = new ReadableStream({
+        async start(controller) {
+          const transcription = await openai.audio.transcriptions.create({
+            file: file,
+            model: "whisper-1",
+            response_format: "verbose_json",
+            timestamp_granularities: ["word"],
+          })
 
-    // Add logging to debug the request
-    console.log("Text-to-speech request:", {
-      text,
-      voice_id,
-      stability,
-      similarity_boost,
-    })
-
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice_id}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "xi-api-key": ELEVEN_LABS_API_KEY as string,
-      },
-      body: JSON.stringify({
-        text,
-        model_id: "eleven_monolingual_v1",
-        voice_settings: {
-          stability,
-          similarity_boost,
+          // Send word-level timestamps
+          if ("words" in transcription) {
+            for (const word of transcription.words || []) {
+              const chunk = {
+                text: word.word,
+                start: word.start,
+                end: word.end,
+              }
+              controller.enqueue(encoder.encode(JSON.stringify(chunk) + "\n"))
+              // Simulate real-time delay based on word timing
+              await new Promise((resolve) => setTimeout(resolve, 100))
+            }
+          }
+          controller.close()
         },
-      }),
-    })
+      })
 
-    // Log the response status and any error details
-    console.log("ElevenLabs API response status:", response.status)
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error("ElevenLabs API error:", errorText)
-      throw new Error(`Failed to convert text to speech: ${errorText}`)
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      })
+    } else {
+      // Regular non-streaming response
+      const transcription = await openai.audio.transcriptions.create({
+        file: file,
+        model: "whisper-1",
+      })
+
+      return NextResponse.json({
+        text: transcription.text,
+      })
     }
-
-    const audioBuffer = await response.arrayBuffer()
-
-    return new NextResponse(audioBuffer, {
-      headers: {
-        "Content-Type": "audio/mpeg",
-        "Content-Length": audioBuffer.byteLength.toString(),
-      },
-    })
   } catch (error) {
-    console.error("Error in text-to-speech:", error)
-    return NextResponse.json(
-      { error: "Failed to convert text to speech", details: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 },
-    )
+    console.error("Error in speech-to-text:", error)
+    return NextResponse.json({ error: "Failed to convert speech to text" }, { status: 500 })
   }
 }
 

@@ -11,3 +11,13 @@ interface Window {
   interface SpeechRecognitionErrorEvent extends Event {
     error: string;
   }
+
+  interface SpeechRecognition extends EventTarget {
+    continuous: boolean
+    interimResults: boolean
+    lang: string
+    onresult: (event: any) => void
+    onerror: (event: any) => void
+    start(): void
+    stop(): void
+  }
