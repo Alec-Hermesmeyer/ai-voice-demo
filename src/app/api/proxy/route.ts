@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const BASE_URL = "https://bg-backend-app1.azurewebsites.net/api/v1/query/";
+const BASE_URL = "https://bg-backend-app1.azurewebsites.net/api/v1/property_graph/query/";
 
 export async function POST(req: Request) {
   try {
