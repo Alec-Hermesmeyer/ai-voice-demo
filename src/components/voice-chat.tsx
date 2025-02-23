@@ -221,7 +221,7 @@ export function VoiceChat() {
   
       const data = await response.json();
       
-      const assistantMessage = {
+      const assistantMessage: Message = {
         id: Math.random().toString(36).substr(2, 9),
         role: "assistant",
         content: data.response,
