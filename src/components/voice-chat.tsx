@@ -170,29 +170,44 @@ export function VoiceChat() {
     setMessages(messages.slice(0, messageIndex + 1))
     await handleSubmit(undefined, messageToRetry.content)
   }
+  const speakText = async (text: string) => {
+    if (!autoSpeak) return; // Only play if autoSpeak is enabled
+  
+    try {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+  
+      if (!response.ok) throw new Error("Failed to fetch TTS audio");
+  
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      
+      const audio = new Audio(audioUrl);
+      audio.play();
+    } catch (error) {
+      console.error("TTS error:", error);
+    }
+  };
+  
 
   const handleSubmit = async (e?: React.FormEvent, retryContent?: string, retries = 0) => {
-    if (e) e.preventDefault()
-    const messageContent = retryContent || input
-    if (!messageContent.trim() || isProcessing) return
-
-    const messageId = Math.random().toString(36).substr(2, 9)
-    setInput("")
-
+    if (e) e.preventDefault();
+    const messageContent = retryContent || input;
+    if (!messageContent.trim() || isProcessing) return;
+  
+    setInput("");
+    const messageId = Math.random().toString(36).substr(2, 9);
+  
     setMessages((prev) => [
       ...prev,
-      {
-        id: messageId,
-        role: "user",
-        content: messageContent,
-        timestamp: new Date(),
-        status: "sending",
-        retries,
-      },
-    ])
-
+      { id: messageId, role: "user", content: messageContent, timestamp: new Date(), status: "sending", retries },
+    ]);
+  
     try {
-      setIsProcessing(true)
+      setIsProcessing(true);
       const response = await fetch("/api/proxy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -200,39 +215,31 @@ export function VoiceChat() {
           message: messageContent,
           history: messages.map((msg) => ({ role: msg.role, content: msg.content })),
         }),
-      })
-
-      if (!response.ok) throw new Error("Failed to get response")
-
-      const data = await response.json()
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Math.random().toString(36).substr(2, 9),
-          role: "assistant",
-          content: data.response,
-          timestamp: new Date(),
-          status: "delivered",
-        },
-      ])
+      });
+  
+      if (!response.ok) throw new Error("Failed to get response");
+  
+      const data = await response.json();
+      
+      const assistantMessage = {
+        id: Math.random().toString(36).substr(2, 9),
+        role: "assistant",
+        content: data.response,
+        timestamp: new Date(),
+        status: "delivered",
+      };
+  
+      setMessages((prev) => [...prev, assistantMessage]);
+  
+      // 🔊 Convert AI response to speech
+      speakText(data.response);
     } catch (error) {
-      console.error("Chat error:", error)
-
-      if (retries < MAX_RETRIES) {
-        setTimeout(() => handleSubmit(undefined, messageContent, retries + 1), 2000)
-      } else {
-        setMessages((prev) => prev.map((msg) => (msg.id === messageId ? { ...msg, status: "error" } : msg)))
-        toast({
-          title: "Error",
-          description: "Failed to get response. Please try again.",
-          variant: "destructive",
-        })
-      }
+      console.error("Chat error:", error);
     } finally {
-      setIsProcessing(false)
+      setIsProcessing(false);
     }
-  }
-
+  };
+  
   const correctGrammar = async (text: string) => {
     if (!text.trim()) return
 
