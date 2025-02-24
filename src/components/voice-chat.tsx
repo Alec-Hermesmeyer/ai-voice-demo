@@ -62,10 +62,10 @@ const VOICE_COMMANDS = [
     pattern: /^\s*(send|submit|say)\s*(.+)/i, // Use .+ to ensure non-empty content
     action: (_: any, content: string) => content.trim() // Return trimmed message content
   },
-    {
+  {
     pattern: /^\s*correct grammar\s*$/i,
     action: (...args: string[]) => 'CORRECT_GRAMMAR'
-    },
+  },
   {
     pattern: /^\s*clear chat\s*$/i,
     action: (...args: string[]) => 'CLEAR_CHAT'
@@ -95,7 +95,8 @@ export function VoiceChat() {
     }
     return [WELCOME_MESSAGE]
   })
-
+  const [isKeyboardEnabled, setIsKeyboardEnabled] = useState(true);
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [input, setInput] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
@@ -202,6 +203,49 @@ export function VoiceChat() {
 
     return () => stopRecording()
   }, [toast])
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Toggle recording with Ctrl/Cmd+Shift+R
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        if (isRecording) {
+          stopRecording();
+          toast({ description: "Recording stopped 🎙️" });
+        } else {
+          startRecording();
+          toast({ description: "Recording started 🎙️🔴" });
+        }
+      }
+
+      // Submit with Ctrl/Cmd+Enter
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (!isProcessing && input.trim()) {
+          handleSubmit();
+        }
+      }
+
+      // Focus textarea with /
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        textareaRef.current?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isRecording, input, isProcessing]);
+
+  // Add keyboard hint component
+  function KeyboardHint() {
+    return (
+      <div className="flex gap-2 text-sm text-muted-foreground items-center justify-center">
+        <kbd className="px-2 py-1 bg-muted rounded-sm">⌘⏎ Send</kbd>
+        <kbd className="px-2 py-1 bg-muted rounded-sm">⌘⇧R Record</kbd>
+        <kbd className="px-2 py-1 bg-muted rounded-sm">/ Focus</kbd>
+      </div>
+    );
+  }
   const detectCommand = (transcript: string): Command | null => {
     for (const cmd of VOICE_COMMANDS) {
       const match = transcript.match(cmd.pattern)
@@ -360,90 +404,90 @@ export function VoiceChat() {
   };
 
   const handleSubmit = async (e?: React.FormEvent, retryContent?: string) => {
-  if (e) e.preventDefault();
-  let messageContent = retryContent || input;
-  if (!messageContent.trim() || isProcessing) return;
+    if (e) e.preventDefault();
+    let messageContent = retryContent || input;
+    if (!messageContent.trim() || isProcessing) return;
 
-  setInput("");
-  setIsProcessing(true);
+    setInput("");
+    setIsProcessing(true);
 
-  // Add temporary uncorrected message
-  setMessages(prev => [...prev, { 
-    id: Date.now().toString(), 
-    role: "user", 
-    content: messageContent, 
-    timestamp: new Date(), 
-    status: "sending" 
-  }]);
-
-  try {
-    // Correct grammar before sending to API
-    const correctedContent = await correctGrammar(messageContent);
-    
-    // Update message with corrected content
-    setMessages(prev => prev.map(msg => 
-      msg.id === String(Date.now())
-        ? { ...msg, content: correctedContent }
-        : msg
-    ));
-
-    // Play pre-response audio
-    await speakText("", true);
-
-    // Send corrected content to API
-    const response = await fetch("/api/proxy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: correctedContent,
-        history: messages.map(msg => ({ role: msg.role, content: msg.content }))
-      })
-    });
-
-    if (!response.ok) throw new Error("Failed to get response");
-
-    const data = await response.json();
-    setMessages(prev => [...prev, { 
-      id: Date.now().toString(), 
-      role: "assistant", 
-      content: data.response, 
-      timestamp: new Date(), 
-      status: "delivered" 
+    // Add temporary uncorrected message
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      role: "user",
+      content: messageContent,
+      timestamp: new Date(),
+      status: "sending"
     }]);
 
-    speakText(data.response);
-  } catch (error) {
-    console.error("Chat error:", error);
-    setMessages(prev => prev.map(msg =>
-      msg.id === String(Date.now())
-        ? { ...msg, status: "error", retries: (msg.retries || 0) + 1 }
-        : msg
-    ));
-  } finally {
-    setIsProcessing(false);
-  }
-};
+    try {
+      // Correct grammar before sending to API
+      const correctedContent = await correctGrammar(messageContent);
 
-// Updated correctGrammar function
-const correctGrammar = async (text: string): Promise<string> => {
-  if (!text.trim()) return text;
+      // Update message with corrected content
+      setMessages(prev => prev.map(msg =>
+        msg.id === String(Date.now())
+          ? { ...msg, content: correctedContent }
+          : msg
+      ));
 
-  try {
-    const response = await fetch("/api/correct-grammar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
+      // Play pre-response audio
+      await speakText("", true);
 
-    if (!response.ok) throw new Error("Grammar correction failed");
-    
-    const data = await response.json();
-    return data.corrected || text;
-  } catch (error) {
-    console.error("Grammar correction error:", error);
-    return text;
-  }
-};
+      // Send corrected content to API
+      const response = await fetch("/api/proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: correctedContent,
+          history: messages.map(msg => ({ role: msg.role, content: msg.content }))
+        })
+      });
+
+      if (!response.ok) throw new Error("Failed to get response");
+
+      const data = await response.json();
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: "assistant",
+        content: data.response,
+        timestamp: new Date(),
+        status: "delivered"
+      }]);
+
+      speakText(data.response);
+    } catch (error) {
+      console.error("Chat error:", error);
+      setMessages(prev => prev.map(msg =>
+        msg.id === String(Date.now())
+          ? { ...msg, status: "error", retries: (msg.retries || 0) + 1 }
+          : msg
+      ));
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Updated correctGrammar function
+  const correctGrammar = async (text: string): Promise<string> => {
+    if (!text.trim()) return text;
+
+    try {
+      const response = await fetch("/api/correct-grammar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!response.ok) throw new Error("Grammar correction failed");
+
+      const data = await response.json();
+      return data.corrected || text;
+    } catch (error) {
+      console.error("Grammar correction error:", error);
+      return text;
+    }
+  };
 
   return (
     <Card className="w-full max-w-7xl mx-auto h-[calc(100vh-8rem)]">
@@ -523,6 +567,7 @@ const correctGrammar = async (text: string): Promise<string> => {
           </ScrollArea>
 
           <div className="p-4 space-y-4 flex-shrink-0">
+          <KeyboardHint />
             {SAMPLE_QUESTIONS.length > 0 && (
               <div className="flex flex-wrap gap-2 justify-center">
                 {SAMPLE_QUESTIONS.map((question) => (
@@ -569,13 +614,21 @@ const correctGrammar = async (text: string): Promise<string> => {
 
               <div className="relative flex-1">
                 <Textarea
-                  placeholder="Type a message..."
+                  ref={textareaRef}
+                  placeholder="Type a message or speak..."
                   value={input}
                   onChange={(e) => setInput(e.target.value.slice(0, MAX_MESSAGE_LENGTH))}
                   disabled={isProcessing}
                   className="pr-12 mt-4 min-h-[44px] max-h-[200px] resize-none overflow-y-auto pb-12"
                   maxLength={MAX_MESSAGE_LENGTH}
                   rows={1}
+                  onKeyDown={(e) => {
+                    // Allow new lines with Shift+Enter
+                    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+                      e.preventDefault();
+                      handleSubmit();
+                    }
+                  }}
                   onInput={(e) => {
                     const target = e.target as HTMLTextAreaElement
                     target.style.height = "0"
