@@ -3,6 +3,7 @@ import "./globals.css"
 import { MainNav } from "@/components/main-nav"
 import { Toaster } from "@/components/ui/toaster"
 import type React from "react" // Import React
+import { VADProvider } from "@ricky0123/vad-react"
 
 const inter = Inter({ subsets: ["latin"] })
 

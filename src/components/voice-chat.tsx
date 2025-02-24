@@ -57,6 +57,36 @@ const WELCOME_MESSAGE: Message = {
   status: "delivered",
 }
 
+const VOICE_COMMANDS = [
+  {
+    pattern: /^\s*(send|submit|say)\s*(.+)/i, // Use .+ to ensure non-empty content
+    action: (_: any, content: string) => content.trim() // Return trimmed message content
+  },
+    {
+    pattern: /^\s*correct grammar\s*$/i,
+    action: (...args: string[]) => 'CORRECT_GRAMMAR'
+    },
+  {
+    pattern: /^\s*clear chat\s*$/i,
+    action: (...args: string[]) => 'CLEAR_CHAT'
+  },
+  {
+    pattern: /^\s*(enable|turn on) auto-?speak\s*$/i,
+    action: (...args: string[]) => 'ENABLE_AUTOSPEAK'
+  },
+  {
+    pattern: /^\s*(disable|turn off) auto-?speak\s*$/i,
+    action: (...args: string[]) => 'DISABLE_AUTOSPEAK'
+  },
+  {
+    pattern: /^\s*delete message\s*$/i,
+    action: (...args: string[]) => 'DELETE_LAST'
+  },
+  {
+    pattern: /^\s*help\s*$/i,
+    action: (...args: string[]) => 'SHOW_HELP'
+  }
+]
 export function VoiceChat() {
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window !== "undefined") {
@@ -71,11 +101,20 @@ export function VoiceChat() {
   const [isRecording, setIsRecording] = useState(false)
   const [autoSpeak, setAutoSpeak] = useState(true)
   const [stream, setStream] = useState<MediaStream>()
-
+  const silenceTimeout = useRef<NodeJS.Timeout | null>(null)
+  const awaitingCommand = useRef(false)
   const recognition = useRef<SpeechRecognition | null>(null)
   const lastFinalTranscript = useRef<string>("")
   const scrollRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
+
+  const COMMAND_FEEDBACK = {
+    CLEAR_CHAT: 'Chat history has been cleared',
+    ENABLE_AUTOSPEAK: 'Auto-speak enabled',
+    DISABLE_AUTOSPEAK: 'Auto-speak disabled',
+    DELETE_LAST: 'Last message deleted',
+    SHOW_HELP: `Available commands: ${VOICE_COMMANDS.map(cmd => cmd.pattern.source.replace(/\\s*\^\\s*|\\s*\$/gi, '')).join(', ')}`
+  }
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -101,21 +140,46 @@ export function VoiceChat() {
         recognition.current!.onresult = (event) => {
           let finalTranscript = lastFinalTranscript.current
           let interimTranscript = ""
+          let hasFinal = false
 
           for (let i = event.resultIndex; i < event.results.length; i++) {
-            if (event.results[i].isFinal) {
-              finalTranscript += " " + event.results[i][0].transcript
-              // When we get final results, trigger grammar correction
-              correctGrammar(finalTranscript.trim())
+            const { transcript, confidence } = event.results[i][0]
+            if (event.results[i].isFinal && confidence > 0.7) {
+              finalTranscript += " " + transcript
+              hasFinal = true
             } else {
-              interimTranscript = event.results[i][0].transcript
+              interimTranscript = transcript
             }
           }
 
-          lastFinalTranscript.current = finalTranscript.trim()
+          if (hasFinal) {
+            const processedTranscript = finalTranscript.trim()
+            const command = detectCommand(processedTranscript)
 
-          // Immediately update input with current transcription
-          setInput(`${finalTranscript} ${interimTranscript}`.trim())
+            if (command) {
+              handleCommand(command)
+              lastFinalTranscript.current = ""
+              setInput("")
+              awaitingCommand.current = false
+            } else {
+              lastFinalTranscript.current = processedTranscript
+              setInput(prev => `${prev} ${processedTranscript}`.trim())
+              awaitingCommand.current = true
+            }
+          }
+
+          // Auto-submit logic
+          if (interimTranscript) {
+            if (silenceTimeout.current !== null) {
+              clearTimeout(silenceTimeout.current)
+            }
+            silenceTimeout.current = setTimeout(() => {
+              if (input.trim() && !awaitingCommand.current) {
+                handleSubmit()
+              }
+              awaitingCommand.current = false
+            }, 1500)
+          }
         }
 
         recognition.current!.onerror = (event) => {
@@ -138,6 +202,51 @@ export function VoiceChat() {
 
     return () => stopRecording()
   }, [toast])
+  const detectCommand = (transcript: string): Command | null => {
+    for (const cmd of VOICE_COMMANDS) {
+      const match = transcript.match(cmd.pattern)
+      if (match) {
+        const result = cmd.action(...match.slice(1))
+        return { type: typeof result === 'string' ? result : cmd.pattern.source, match: match[0] }
+      }
+    }
+    return null
+  }
+
+  interface Command {
+    type: keyof typeof COMMAND_FEEDBACK | string;
+    match: string;
+  }
+
+  const handleCommand = (command: Command) => {
+    switch (command.type) {
+      case 'CLEAR_CHAT':
+        clearChat()
+        break
+      case 'ENABLE_AUTOSPEAK':
+        setAutoSpeak(true)
+        break
+      case 'DISABLE_AUTOSPEAK':
+        setAutoSpeak(false)
+        break
+      case 'DELETE_LAST':
+        setMessages(prev => prev.slice(0, -1))
+        break
+      case 'SHOW_HELP':
+        toast({ title: 'Voice Commands', description: COMMAND_FEEDBACK.SHOW_HELP })
+        break
+      default:
+        if (typeof command.type === 'string') {
+          handleSubmit(undefined, command.type)
+        }
+    }
+
+    if (COMMAND_FEEDBACK[command.type as keyof typeof COMMAND_FEEDBACK]) {
+      toast({ title: 'Command Executed', description: COMMAND_FEEDBACK[command.type as keyof typeof COMMAND_FEEDBACK] })
+      speakText(COMMAND_FEEDBACK[command.type as keyof typeof COMMAND_FEEDBACK])
+    }
+  }
+
 
   const clearChat = () => {
     setMessages([WELCOME_MESSAGE])
@@ -180,42 +289,42 @@ export function VoiceChat() {
       },
     });
   };
-  
+
   // Function to store audio in IndexedDB
   const storeAudio = async (key: string, blob: Blob) => {
     const db = await getDB();
     await db.put("audio", blob, key);
   };
-  
+
   // Function to retrieve audio from IndexedDB
   const getAudio = async (key: string) => {
     const db = await getDB();
     return db.get("audio", key);
   };
-  
+
   // Function to generate a unique hash for text
   const generateHash = (text: string) => {
     return btoa(unescape(encodeURIComponent(text))).slice(0, 10); // Shortened base64 encoding
   };
-  
+
   const preResponseTexts = [
     "Let me think...",
     "One moment please...",
     "Processing your request...",
     "Just a second...",
   ];
-  
+
   const speakText = async (text: string, isPreResponse = false) => {
     if (!autoSpeak) return; // Only play if autoSpeak is enabled
-  
+
     try {
       let textToSpeak = text;
       if (isPreResponse) {
         textToSpeak = preResponseTexts[Math.floor(Math.random() * preResponseTexts.length)];
       }
-  
+
       const cacheKey = `tts_cache_${generateHash(textToSpeak)}`;
-  
+
       // 🔍 Check if audio is already stored in IndexedDB
       const cachedAudioBlob = await getAudio(cacheKey);
       if (cachedAudioBlob) {
@@ -224,25 +333,25 @@ export function VoiceChat() {
         audio.play();
         return;
       }
-  
+
       console.log("Requesting TTS for:", textToSpeak);
       const response = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: textToSpeak }),
       });
-  
+
       if (!response.ok) {
         console.error("TTS Fetch Error:", await response.text());
         throw new Error("Failed to fetch TTS audio");
       }
-  
+
       console.log("TTS response received");
       const audioBlob = await response.blob();
-  
+
       // 📌 Store the audio in IndexedDB for future use
       await storeAudio(cacheKey, audioBlob);
-  
+
       const audio = new Audio(URL.createObjectURL(audioBlob));
       audio.play();
     } catch (error) {
@@ -251,69 +360,90 @@ export function VoiceChat() {
   };
 
   const handleSubmit = async (e?: React.FormEvent, retryContent?: string) => {
-    if (e) e.preventDefault();
-    const messageContent = retryContent || input;
-    if (!messageContent.trim() || isProcessing) return;
-  
-    setInput("");
-    setIsProcessing(true);
-  
-    setMessages(prev => [...prev, { id: Date.now().toString(), role: "user", content: messageContent, timestamp: new Date(), status: "sending" }]);
-  
-    try {
-      // 🔊 Play the cached or generated pre-response & wait until it finishes
-      await speakText("", true);
-  
-      // 🔄 Fetch AI-generated response
-      const response = await fetch("/api/proxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: messageContent,
-          history: messages.map(msg => ({ role: msg.role, content: msg.content }))
-        })
-      });
-  
-      if (!response.ok) throw new Error("Failed to get response");
-  
-      const data = await response.json();
-      setMessages(prev => [...prev, { id: Date.now().toString(), role: "assistant", content: data.response, timestamp: new Date(), status: "delivered" }]);
-  
-      // 🔊 Play the AI-generated response after pre-response
-      speakText(data.response);
-    } catch (error) {
-      console.error("Chat error:", error);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-  
+  if (e) e.preventDefault();
+  let messageContent = retryContent || input;
+  if (!messageContent.trim() || isProcessing) return;
 
-  const correctGrammar = async (text: string) => {
-    if (!text.trim()) return
+  setInput("");
+  setIsProcessing(true);
 
-    try {
-      const response = await fetch("/api/correct-grammar", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ text }),
+  // Add temporary uncorrected message
+  setMessages(prev => [...prev, { 
+    id: Date.now().toString(), 
+    role: "user", 
+    content: messageContent, 
+    timestamp: new Date(), 
+    status: "sending" 
+  }]);
+
+  try {
+    // Correct grammar before sending to API
+    const correctedContent = await correctGrammar(messageContent);
+    
+    // Update message with corrected content
+    setMessages(prev => prev.map(msg => 
+      msg.id === String(Date.now())
+        ? { ...msg, content: correctedContent }
+        : msg
+    ));
+
+    // Play pre-response audio
+    await speakText("", true);
+
+    // Send corrected content to API
+    const response = await fetch("/api/proxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: correctedContent,
+        history: messages.map(msg => ({ role: msg.role, content: msg.content }))
       })
+    });
 
-      if (!response.ok) throw new Error("Grammar correction failed")
+    if (!response.ok) throw new Error("Failed to get response");
 
-      const data = await response.json()
-      if (data.corrected) {
-        setInput(data.corrected)
-        lastFinalTranscript.current = data.corrected
-      }
-    } catch (error) {
-      console.error("Grammar correction error:", error)
-      // On error, keep the uncorrected text
-      setInput(text)
-    }
+    const data = await response.json();
+    setMessages(prev => [...prev, { 
+      id: Date.now().toString(), 
+      role: "assistant", 
+      content: data.response, 
+      timestamp: new Date(), 
+      status: "delivered" 
+    }]);
+
+    speakText(data.response);
+  } catch (error) {
+    console.error("Chat error:", error);
+    setMessages(prev => prev.map(msg =>
+      msg.id === String(Date.now())
+        ? { ...msg, status: "error", retries: (msg.retries || 0) + 1 }
+        : msg
+    ));
+  } finally {
+    setIsProcessing(false);
   }
+};
+
+// Updated correctGrammar function
+const correctGrammar = async (text: string): Promise<string> => {
+  if (!text.trim()) return text;
+
+  try {
+    const response = await fetch("/api/correct-grammar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!response.ok) throw new Error("Grammar correction failed");
+    
+    const data = await response.json();
+    return data.corrected || text;
+  } catch (error) {
+    console.error("Grammar correction error:", error);
+    return text;
+  }
+};
 
   return (
     <Card className="w-full max-w-7xl mx-auto h-[calc(100vh-8rem)]">
@@ -371,9 +501,8 @@ export function VoiceChat() {
                     className={`flex gap-3 ${message.role === "user" ? "flex-row-reverse" : ""}`}
                   >
                     <div
-                      className={`rounded-lg px-4 py-2 max-w-[85%] relative break-words whitespace-pre-wrap ${
-                        message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
-                      }`}
+                      className={`rounded-lg px-4 py-2 max-w-[85%] relative break-words whitespace-pre-wrap ${message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
+                        }`}
                     >
                       {message.content}
                       {message.status === "error" && (
@@ -424,8 +553,18 @@ export function VoiceChat() {
                 onClick={isRecording ? stopRecording : startRecording}
                 disabled={isProcessing}
                 className="shrink-0"
+                aria-live="polite"
               >
-                {isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                {isRecording ? (
+                  <motion.div
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ duration: 0.8, repeat: Infinity }}
+                  >
+                    <Square className="h-4 w-4" />
+                  </motion.div>
+                ) : (
+                  <Mic className="h-4 w-4" />
+                )}
               </Button>
 
               <div className="relative flex-1">
