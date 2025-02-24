@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { openDB } from "idb";
 
 
 declare global {
@@ -170,97 +171,123 @@ export function VoiceChat() {
     setMessages(messages.slice(0, messageIndex + 1))
     await handleSubmit(undefined, messageToRetry.content)
   }
-  const preResponseTexts = ["Let me see...", "I will check on that for you.", "Give me a moment..."];
-
-// Function to generate a hash key for a given text
-const generateHash = (text: string) => {
-  return btoa(unescape(encodeURIComponent(text))).slice(0, 10); // Shortened base64 encoding
-};
-
-const speakText = async (text: string, isPreResponse = false) => {
-  if (!autoSpeak) return; // Only play if autoSpeak is enabled
-
-  try {
-    let textToSpeak = text;
-
-    if (isPreResponse) {
-      // Randomly pick a pre-response phrase
-      textToSpeak = preResponseTexts[Math.floor(Math.random() * preResponseTexts.length)];
-    }
-
-    const cacheKey = `tts_cache_${generateHash(textToSpeak)}`;
-    const cachedAudioUrl = localStorage.getItem(cacheKey);
-
-    if (cachedAudioUrl) {
-      console.log("Playing cached TTS audio for:", textToSpeak);
-      const audio = new Audio(cachedAudioUrl);
+  const getDB = async () => {
+    return openDB("tts-audio-cache", 1, {
+      upgrade(db) {
+        if (!db.objectStoreNames.contains("audio")) {
+          db.createObjectStore("audio");
+        }
+      },
+    });
+  };
+  
+  // Function to store audio in IndexedDB
+  const storeAudio = async (key: string, blob: Blob) => {
+    const db = await getDB();
+    await db.put("audio", blob, key);
+  };
+  
+  // Function to retrieve audio from IndexedDB
+  const getAudio = async (key: string) => {
+    const db = await getDB();
+    return db.get("audio", key);
+  };
+  
+  // Function to generate a unique hash for text
+  const generateHash = (text: string) => {
+    return btoa(unescape(encodeURIComponent(text))).slice(0, 10); // Shortened base64 encoding
+  };
+  
+  const preResponseTexts = [
+    "Let me think...",
+    "One moment please...",
+    "Processing your request...",
+    "Just a second...",
+  ];
+  
+  const speakText = async (text: string, isPreResponse = false) => {
+    if (!autoSpeak) return; // Only play if autoSpeak is enabled
+  
+    try {
+      let textToSpeak = text;
+      if (isPreResponse) {
+        textToSpeak = preResponseTexts[Math.floor(Math.random() * preResponseTexts.length)];
+      }
+  
+      const cacheKey = `tts_cache_${generateHash(textToSpeak)}`;
+  
+      // 🔍 Check if audio is already stored in IndexedDB
+      const cachedAudioBlob = await getAudio(cacheKey);
+      if (cachedAudioBlob) {
+        console.log("Playing cached TTS audio for:", textToSpeak);
+        const audio = new Audio(URL.createObjectURL(cachedAudioBlob));
+        audio.play();
+        return;
+      }
+  
+      console.log("Requesting TTS for:", textToSpeak);
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: textToSpeak }),
+      });
+  
+      if (!response.ok) {
+        console.error("TTS Fetch Error:", await response.text());
+        throw new Error("Failed to fetch TTS audio");
+      }
+  
+      console.log("TTS response received");
+      const audioBlob = await response.blob();
+  
+      // 📌 Store the audio in IndexedDB for future use
+      await storeAudio(cacheKey, audioBlob);
+  
+      const audio = new Audio(URL.createObjectURL(audioBlob));
       audio.play();
-      return;
+    } catch (error) {
+      console.error("TTS error:", error);
     }
+  };
 
-    console.log("Requesting TTS for:", textToSpeak);
-    const response = await fetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: textToSpeak }),
-    });
-
-    if (!response.ok) {
-      console.error("TTS Fetch Error:", await response.text());
-      throw new Error("Failed to fetch TTS audio");
+  const handleSubmit = async (e?: React.FormEvent, retryContent?: string) => {
+    if (e) e.preventDefault();
+    const messageContent = retryContent || input;
+    if (!messageContent.trim() || isProcessing) return;
+  
+    setInput("");
+    setIsProcessing(true);
+  
+    setMessages(prev => [...prev, { id: Date.now().toString(), role: "user", content: messageContent, timestamp: new Date(), status: "sending" }]);
+  
+    try {
+      // 🔊 Play the cached or generated pre-response & wait until it finishes
+      await speakText("", true);
+  
+      // 🔄 Fetch AI-generated response
+      const response = await fetch("/api/proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: messageContent,
+          history: messages.map(msg => ({ role: msg.role, content: msg.content }))
+        })
+      });
+  
+      if (!response.ok) throw new Error("Failed to get response");
+  
+      const data = await response.json();
+      setMessages(prev => [...prev, { id: Date.now().toString(), role: "assistant", content: data.response, timestamp: new Date(), status: "delivered" }]);
+  
+      // 🔊 Play the AI-generated response after pre-response
+      speakText(data.response);
+    } catch (error) {
+      console.error("Chat error:", error);
+    } finally {
+      setIsProcessing(false);
     }
-
-    console.log("TTS response received");
-    const audioBlob = await response.blob();
-    const audioUrl = URL.createObjectURL(audioBlob);
-
-    // Cache the audio URL for future use
-    localStorage.setItem(cacheKey, audioUrl);
-
-    const audio = new Audio(audioUrl);
-    audio.play();
-  } catch (error) {
-    console.error("TTS error:", error);
-  }
-};
-
-const handleSubmit = async (e?: React.FormEvent, retryContent?: string) => {
-  if (e) e.preventDefault();
-  const messageContent = retryContent || input;
-  if (!messageContent.trim() || isProcessing) return;
-
-  setInput("");
-  setIsProcessing(true);
-
-  setMessages(prev => [...prev, { id: Date.now().toString(), role: "user", content: messageContent, timestamp: new Date(), status: "sending" }]);
-
-  try {
-    // 🔊 Play the cached or generated pre-response
-    await speakText("", true); // Empty string with `isPreResponse=true` will trigger random selection
-
-    // 🔄 Fetch AI-generated response
-    const response = await fetch("/api/proxy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: messageContent,
-        history: messages.map(msg => ({ role: msg.role, content: msg.content }))
-      })
-    });
-
-    if (!response.ok) throw new Error("Failed to get response");
-
-    const data = await response.json();
-    setMessages(prev => [...prev, { id: Date.now().toString(), role: "assistant", content: data.response, timestamp: new Date(), status: "delivered" }]);
-
-    // 🔊 Play the AI-generated response
-    speakText(data.response);
-  } catch (error) {
-    console.error("Chat error:", error);
-  } finally {
-    setIsProcessing(false);
-  }
-};
+  };
+  
 
   const correctGrammar = async (text: string) => {
     if (!text.trim()) return
