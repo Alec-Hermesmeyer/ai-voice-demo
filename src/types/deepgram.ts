@@ -1,30 +1,31 @@
-export interface TranscriptionOptions {
-  language?: string
-  model?: string
-  punctuate?: boolean
-  profanity_filter?: boolean
-  redact?: string[]
-  diarize?: boolean
-  smart_format?: boolean
-  filler_words?: boolean
-}
-
-export interface TranscriptionResponse {
-  transcript: string
-  confidence: number
-  words: Array<{
+export interface DeepgramWord {
     word: string
     start: number
     end: number
     confidence: number
-  }>
-  speakers?: Array<{
-    speaker: number
+    speaker?: number
+    sentiment?: "positive" | "negative" | "neutral"
+  }
+  
+  export interface DeepgramResponse {
+    transcript: string
     confidence: number
-  }>
-}
-
-export interface ErrorResponse {
-  error: string
-  status: number
-}
+    words: DeepgramWord[]
+    speakers: number
+    sentiment: {
+      overall: "positive" | "negative" | "neutral"
+      segments: Array<{
+        sentiment: "positive" | "negative" | "neutral"
+        start: number
+        end: number
+      }>
+    }
+  }
+  
+  export interface TranscriptionOptions {
+    language?: string
+    keywords?: string[]
+    diarization?: boolean
+    sentiment?: boolean
+  }
+  
