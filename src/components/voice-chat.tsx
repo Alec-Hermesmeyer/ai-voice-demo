@@ -534,7 +534,7 @@ export function VoiceChat() {
         <div className="flex flex-col h-[calc(100%-4rem)]">
           <ScrollArea className="flex-1">
             <div className="flex flex-col gap-6 p-4" ref={scrollRef}>
-              <AnimatePresence initial={false}>
+              <AnimatePresence initial={true}>
                 {messages.map((message, index) => (
                   <motion.div
                     key={message.id}
