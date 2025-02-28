@@ -54,7 +54,6 @@
 // }
 
 import { NextResponse } from 'next/server';
-import { WebSocketPair } from '@cloudflare/workers-types';
 import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
 
 export const runtime = 'edge';
@@ -69,47 +68,32 @@ export async function GET(request: Request) {
 
   try {
     const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
-    const protocol = request.headers.get('sec-websocket-protocol')?.split(', ')[1] || '';
-
-    // Create WebSocket pair for client/server communication
+    
+    // Create WebSocket pair
     const { 0: clientSocket, 1: serverSocket } = new WebSocketPair();
-
-    // Handle server-side WebSocket
     serverSocket.accept();
 
-    // Create Deepgram connection
     const connection = deepgram.listen.live({
       model: "nova-3",
       language: "en-US",
       smart_format: true,
     });
 
-    // Handle Deepgram connection events
     connection.on(LiveTranscriptionEvents.Open, () => {
       fetch(audioUrl)
-        .then(response => {
-          const reader = response.body?.getReader();
-          
+        .then(response => response.body?.getReader())
+        .then(reader => {
           const readStream = () => {
             reader?.read().then(({ done, value }) => {
-              if (done) {
-                connection.finish();
-                return;
-              }
-              
-              if (connection.getReadyState() === WebSocket.OPEN) {
-                connection.send(value);
-              }
-              
+              if (done) return connection.finish();
+              if (connection.getReadyState() === WebSocket.OPEN) connection.send(value);
               readStream();
             });
           };
-
           readStream();
         });
     });
 
-    // Forward transcripts to client
     connection.on(LiveTranscriptionEvents.Transcript, (data) => {
       if (serverSocket.readyState === WebSocket.OPEN) {
         serverSocket.send(JSON.stringify({
@@ -118,32 +102,26 @@ export async function GET(request: Request) {
       }
     });
 
-    // Handle cleanup
-    serverSocket.addEventListener('close', () => {
-      connection.finish();
-    });
-
+    serverSocket.addEventListener('close', () => connection.finish());
     connection.on(LiveTranscriptionEvents.Error, (err) => {
       console.error('Deepgram error:', err);
       serverSocket.close(1011, 'Deepgram error');
     });
 
-    // Return the client WebSocket in the response
     return new Response(null, {
       status: 101,
-      // @ts-ignore - Cloudflare Workers-style WebSocket pairing
+      // @ts-ignore - WebSocket handling in Edge Runtime
       webSocket: clientSocket,
       headers: new Headers({
         'Upgrade': 'websocket',
         'Connection': 'Upgrade',
-        'Sec-WebSocket-Protocol': protocol,
       }),
     });
 
   } catch (error) {
-    console.error('WebSocket setup error:', error);
+    console.error('WebSocket error:', error);
     return NextResponse.json(
-      { error: 'Failed to establish connection' },
+      { error: 'Connection failed' },
       { status: 500 }
     );
   }
