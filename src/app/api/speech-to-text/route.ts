@@ -55,20 +55,20 @@
 
 import { NextResponse } from "next/server";
 import { WebSocketServer } from "ws";
-import { Deepgram } from "@deepgram/sdk";
+import { Deepgram} from "@deepgram/sdk";
+import { IncomingMessage } from "http";
 
 const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY || "");
 
 export const runtime = "nodejs";
 
 const wss = new WebSocketServer({ noServer: true });
-
-export async function GET(req: Request) {
+export async function GET(req: Request & IncomingMessage) {
   if (!process.env.DEEPGRAM_API_KEY) {
     return NextResponse.json({ error: "Missing Deepgram API Key" }, { status: 500 });
   }
 
-  const { socket, response } = new Response(new WritableStream(), {
+  const response = new Response(null, {
     status: 101,
     headers: {
       Upgrade: "websocket",
@@ -76,7 +76,12 @@ export async function GET(req: Request) {
     },
   });
 
-  wss.handleUpgrade(req, socket, Buffer.alloc(0), (ws) => {
+  const { headers } = req;
+  const socketKey = headers.get("sec-websocket-key");
+  if (!socketKey) {
+    return NextResponse.json({ error: "Missing WebSocket key" }, { status: 400 });
+  }
+  wss.handleUpgrade(req as IncomingMessage, req.socket as any, Buffer.alloc(0), (ws) => {
     console.log("🔗 WebSocket connection established");
 
     const deepgramLive = deepgram.transcription.live({
@@ -85,14 +90,14 @@ export async function GET(req: Request) {
       language: "en-US",
     });
 
-    deepgramLive.on("transcriptReceived", (transcription) => {
+    deepgramLive.on("transcriptReceived", (transcription: any) => {
       if (transcription.channel.alternatives[0].transcript) {
         console.log("📜 Transcription:", transcription.channel.alternatives[0].transcript);
         ws.send(JSON.stringify({ text: transcription.channel.alternatives[0].transcript }));
       }
     });
 
-    deepgramLive.on("error", (err) => {
+    deepgramLive.on("error", (err: unknown) => {
       console.error("Deepgram error:", err);
       ws.send(JSON.stringify({ error: "Deepgram error" }));
       ws.close();
