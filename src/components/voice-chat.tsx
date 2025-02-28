@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useState, useRef, useEffect } from "react"
 import { Mic, Square, SendHorizontal, Loader2, Volume2, VolumeX, MessageSquare, RefreshCw, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -20,8 +22,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { openDB } from "idb";
-
+import { openDB } from "idb"
+import type SpeechRecognition from "speech-recognition-polyfill"
+import { WakeWordStatus } from "@/components/wake-word-status"
 
 declare global {
   interface Window {
@@ -47,6 +50,29 @@ interface Message {
   timestamp: Date
   status?: "sending" | "sent" | "delivered" | "error"
   retries?: number
+  sentiment?: string
+}
+
+interface SpeakerSegment {
+  speaker: number
+  text: string
+  sentiment: string
+  confidence: number
+}
+
+interface EnhancedTranscription {
+  transcript: string
+  speakers: number
+  segments: SpeakerSegment[]
+  sentiment: {
+    overall: string
+    segments: Array<{
+      sentiment: string
+      start: number
+      end: number
+    }>
+  }
+  keywords?: Record<string, number>
 }
 
 const WELCOME_MESSAGE: Message = {
@@ -60,32 +86,32 @@ const WELCOME_MESSAGE: Message = {
 const VOICE_COMMANDS = [
   {
     pattern: /^\s*(send|submit|say)\s*(.+)/i, // Use .+ to ensure non-empty content
-    action: (_: any, content: string) => content.trim() // Return trimmed message content
+    action: (_: any, content: string) => content.trim(), // Return trimmed message content
   },
   {
     pattern: /^\s*correct grammar\s*$/i,
-    action: (...args: string[]) => 'CORRECT_GRAMMAR'
+    action: (...args: string[]) => "CORRECT_GRAMMAR",
   },
   {
     pattern: /^\s*clear chat\s*$/i,
-    action: (...args: string[]) => 'CLEAR_CHAT'
+    action: (...args: string[]) => "CLEAR_CHAT",
   },
   {
     pattern: /^\s*(enable|turn on) auto-?speak\s*$/i,
-    action: (...args: string[]) => 'ENABLE_AUTOSPEAK'
+    action: (...args: string[]) => "ENABLE_AUTOSPEAK",
   },
   {
     pattern: /^\s*(disable|turn off) auto-?speak\s*$/i,
-    action: (...args: string[]) => 'DISABLE_AUTOSPEAK'
+    action: (...args: string[]) => "DISABLE_AUTOSPEAK",
   },
   {
     pattern: /^\s*delete message\s*$/i,
-    action: (...args: string[]) => 'DELETE_LAST'
+    action: (...args: string[]) => "DELETE_LAST",
   },
   {
     pattern: /^\s*help\s*$/i,
-    action: (...args: string[]) => 'SHOW_HELP'
-  }
+    action: (...args: string[]) => "SHOW_HELP",
+  },
 ]
 export function VoiceChat() {
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -95,7 +121,10 @@ export function VoiceChat() {
     }
     return [WELCOME_MESSAGE]
   })
-  const [isKeyboardEnabled, setIsKeyboardEnabled] = useState(true);
+  const [isKeyboardEnabled, setIsKeyboardEnabled] = useState(true)
+  const [wakeWordDetector, setWakeWordDetector] = useState<WakeWordDetector | null>(null)
+  const [isWakeWordEnabled, setIsWakeWordEnabled] = useState(true)
+  const [isWakeWordListening, setIsWakeWordListening] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [input, setInput] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
@@ -108,13 +137,15 @@ export function VoiceChat() {
   const lastFinalTranscript = useRef<string>("")
   const scrollRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
+  const [speakerSegments, setSpeakerSegments] = useState<SpeakerSegment[]>([])
+  const [overallSentiment, setOverallSentiment] = useState<string>("")
 
   const COMMAND_FEEDBACK = {
-    CLEAR_CHAT: 'Chat history has been cleared',
-    ENABLE_AUTOSPEAK: 'Auto-speak enabled',
-    DISABLE_AUTOSPEAK: 'Auto-speak disabled',
-    DELETE_LAST: 'Last message deleted',
-    SHOW_HELP: `Available commands: ${VOICE_COMMANDS.map(cmd => cmd.pattern.source.replace(/\\s*\^\\s*|\\s*\$/gi, '')).join(', ')}`
+    CLEAR_CHAT: "Chat history has been cleared",
+    ENABLE_AUTOSPEAK: "Auto-speak enabled",
+    DISABLE_AUTOSPEAK: "Auto-speak disabled",
+    DELETE_LAST: "Last message deleted",
+    SHOW_HELP: `Available commands: ${VOICE_COMMANDS.map((cmd) => cmd.pattern.source.replace(/\\s*\^\\s*|\\s*\$/gi, "")).join(", ")}`,
   }
 
   useEffect(() => {
@@ -129,7 +160,7 @@ export function VoiceChat() {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+      const SpeechRecognition: typeof window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
       if (SpeechRecognition) {
         recognition.current = new SpeechRecognition()
         if (recognition.current) {
@@ -164,7 +195,7 @@ export function VoiceChat() {
               awaitingCommand.current = false
             } else {
               lastFinalTranscript.current = processedTranscript
-              setInput(prev => `${prev} ${processedTranscript}`.trim())
+              setInput((prev) => `${prev} ${processedTranscript}`.trim())
               awaitingCommand.current = true
             }
           }
@@ -202,39 +233,70 @@ export function VoiceChat() {
     }
 
     return () => stopRecording()
-  }, [toast])
+  }, [toast, input])
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Toggle recording with Ctrl/Cmd+Shift+R
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
-        e.preventDefault();
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "r") {
+        e.preventDefault()
         if (isRecording) {
-          stopRecording();
-          toast({ description: "Recording stopped 🎙️" });
+          stopRecording()
+          toast({ description: "Recording stopped 🎙️" })
         } else {
-          startRecording();
-          toast({ description: "Recording started 🎙️🔴" });
+          startRecording()
+          toast({ description: "Recording started 🎙️🔴" })
         }
       }
 
       // Submit with Ctrl/Cmd+Enter
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault()
         if (!isProcessing && input.trim()) {
-          handleSubmit();
+          handleSubmit()
         }
       }
 
       // Focus textarea with /
-      if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        textareaRef.current?.focus();
+      if (e.key === "/" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault()
+        textareaRef.current?.focus()
       }
-    };
+    }
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isRecording, input, isProcessing]);
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [isRecording, input, isProcessing, toast])
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && isWakeWordEnabled) {
+      const detector = new WakeWordDetector("hey assistant", () => {
+        if (!isRecording) {
+          // Play a success sound
+          const audio = new Audio("/sounds/wake-word-detected.mp3")
+          audio.volume = 0.2
+          audio.play()
+
+          toast({
+            title: "Wake word detected",
+            description: "Listening for your message...",
+          })
+          startRecording()
+        }
+      })
+
+      setWakeWordDetector(detector)
+      detector.start()
+      setIsWakeWordListening(true)
+
+      return () => {
+        detector.stop()
+        setIsWakeWordListening(false)
+      }
+    } else {
+      setIsWakeWordListening(false)
+    }
+  }, [isWakeWordEnabled, toast, isRecording])
 
   // Add keyboard hint component
   function KeyboardHint() {
@@ -244,53 +306,52 @@ export function VoiceChat() {
         <kbd className="px-2 py-1 bg-muted rounded-sm">⌘⇧R Record</kbd>
         <kbd className="px-2 py-1 bg-muted rounded-sm">/ Focus</kbd>
       </div>
-    );
+    )
   }
   const detectCommand = (transcript: string): Command | null => {
     for (const cmd of VOICE_COMMANDS) {
       const match = transcript.match(cmd.pattern)
       if (match) {
         const result = cmd.action(...match.slice(1))
-        return { type: typeof result === 'string' ? result : cmd.pattern.source, match: match[0] }
+        return { type: typeof result === "string" ? result : cmd.pattern.source, match: match[0] }
       }
     }
     return null
   }
 
   interface Command {
-    type: keyof typeof COMMAND_FEEDBACK | string;
-    match: string;
+    type: keyof typeof COMMAND_FEEDBACK | string
+    match: string
   }
 
   const handleCommand = (command: Command) => {
     switch (command.type) {
-      case 'CLEAR_CHAT':
+      case "CLEAR_CHAT":
         clearChat()
         break
-      case 'ENABLE_AUTOSPEAK':
+      case "ENABLE_AUTOSPEAK":
         setAutoSpeak(true)
         break
-      case 'DISABLE_AUTOSPEAK':
+      case "DISABLE_AUTOSPEAK":
         setAutoSpeak(false)
         break
-      case 'DELETE_LAST':
-        setMessages(prev => prev.slice(0, -1))
+      case "DELETE_LAST":
+        setMessages((prev) => prev.slice(0, -1))
         break
-      case 'SHOW_HELP':
-        toast({ title: 'Voice Commands', description: COMMAND_FEEDBACK.SHOW_HELP })
+      case "SHOW_HELP":
+        toast({ title: "Voice Commands", description: COMMAND_FEEDBACK.SHOW_HELP })
         break
       default:
-        if (typeof command.type === 'string') {
+        if (typeof command.type === "string") {
           handleSubmit(undefined, command.type)
         }
     }
 
     if (COMMAND_FEEDBACK[command.type as keyof typeof COMMAND_FEEDBACK]) {
-      toast({ title: 'Command Executed', description: COMMAND_FEEDBACK[command.type as keyof typeof COMMAND_FEEDBACK] })
+      toast({ title: "Command Executed", description: COMMAND_FEEDBACK[command.type as keyof typeof COMMAND_FEEDBACK] })
       speakText(COMMAND_FEEDBACK[command.type as keyof typeof COMMAND_FEEDBACK])
     }
   }
-
 
   const clearChat = () => {
     setMessages([WELCOME_MESSAGE])
@@ -328,111 +389,107 @@ export function VoiceChat() {
     return openDB("tts-audio-cache", 1, {
       upgrade(db) {
         if (!db.objectStoreNames.contains("audio")) {
-          db.createObjectStore("audio");
+          db.createObjectStore("audio")
         }
       },
-    });
-  };
+    })
+  }
 
   // Function to store audio in IndexedDB
   const storeAudio = async (key: string, blob: Blob) => {
-    const db = await getDB();
-    await db.put("audio", blob, key);
-  };
+    const db = await getDB()
+    await db.put("audio", blob, key)
+  }
 
   // Function to retrieve audio from IndexedDB
   const getAudio = async (key: string) => {
-    const db = await getDB();
-    return db.get("audio", key);
-  };
+    const db = await getDB()
+    return db.get("audio", key)
+  }
 
   // Function to generate a unique hash for text
   const generateHash = (text: string) => {
-    return btoa(unescape(encodeURIComponent(text))).slice(0, 10); // Shortened base64 encoding
-  };
+    return btoa(unescape(encodeURIComponent(text))).slice(0, 10) // Shortened base64 encoding
+  }
 
-  const preResponseTexts = [
-    "Let me think...",
-    "One moment please...",
-    "Processing your request...",
-    "Just a second...",
-  ];
+  const preResponseTexts = ["Let me think...", "One moment please...", "Processing your request...", "Just a second..."]
 
   const speakText = async (text: string, isPreResponse = false) => {
-    if (!autoSpeak) return; // Only play if autoSpeak is enabled
+    if (!autoSpeak) return // Only play if autoSpeak is enabled
 
     try {
-      let textToSpeak = text;
+      let textToSpeak = text
       if (isPreResponse) {
-        textToSpeak = preResponseTexts[Math.floor(Math.random() * preResponseTexts.length)];
+        textToSpeak = preResponseTexts[Math.floor(Math.random() * preResponseTexts.length)]
       }
 
-      const cacheKey = `tts_cache_${generateHash(textToSpeak)}`;
+      const cacheKey = `tts_cache_${generateHash(textToSpeak)}`
 
       // 🔍 Check if audio is already stored in IndexedDB
-      const cachedAudioBlob = await getAudio(cacheKey);
+      const cachedAudioBlob = await getAudio(cacheKey)
       if (cachedAudioBlob) {
-        console.log("Playing cached TTS audio for:", textToSpeak);
-        const audio = new Audio(URL.createObjectURL(cachedAudioBlob));
-        audio.play();
-        return;
+        console.log("Playing cached TTS audio for:", textToSpeak)
+        const audio = new Audio(URL.createObjectURL(cachedAudioBlob))
+        audio.play()
+        return
       }
 
-      console.log("Requesting TTS for:", textToSpeak);
+      console.log("Requesting TTS for:", textToSpeak)
       const response = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: textToSpeak }),
-      });
+      })
 
       if (!response.ok) {
-        console.error("TTS Fetch Error:", await response.text());
-        throw new Error("Failed to fetch TTS audio");
+        console.error("TTS Fetch Error:", await response.text())
+        throw new Error("Failed to fetch TTS audio")
       }
 
-      console.log("TTS response received");
-      const audioBlob = await response.blob();
+      console.log("TTS response received")
+      const audioBlob = await response.blob()
 
       // 📌 Store the audio in IndexedDB for future use
-      await storeAudio(cacheKey, audioBlob);
+      await storeAudio(cacheKey, audioBlob)
 
-      const audio = new Audio(URL.createObjectURL(audioBlob));
-      audio.play();
+      const audio = new Audio(URL.createObjectURL(audioBlob))
+      audio.play()
     } catch (error) {
-      console.error("TTS error:", error);
+      console.error("TTS error:", error)
     }
-  };
+  }
 
   const handleSubmit = async (e?: React.FormEvent, retryContent?: string) => {
-    if (e) e.preventDefault();
-    let messageContent = retryContent || input;
-    if (!messageContent.trim() || isProcessing) return;
+    if (e) e.preventDefault()
+    const messageContent = retryContent || input
+    if (!messageContent.trim() || isProcessing) return
 
-    setInput("");
-    setIsProcessing(true);
+    setInput("")
+    setIsProcessing(true)
 
     // Add temporary uncorrected message
-    setMessages(prev => [...prev, {
-      id: Date.now().toString(),
-      role: "user",
-      content: messageContent,
-      timestamp: new Date(),
-      status: "sending"
-    }]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: Date.now().toString(),
+        role: "user",
+        content: messageContent,
+        timestamp: new Date(),
+        status: "sending",
+      },
+    ])
 
     try {
       // Correct grammar before sending to API
-      const correctedContent = await correctGrammar(messageContent);
+      const correctedContent = await correctGrammar(messageContent)
 
       // Update message with corrected content
-      setMessages(prev => prev.map(msg =>
-        msg.id === String(Date.now())
-          ? { ...msg, content: correctedContent }
-          : msg
-      ));
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === String(Date.now()) ? { ...msg, content: correctedContent } : msg)),
+      )
 
       // Play pre-response audio
-      await speakText("", true);
+      await speakText("", true)
 
       // Send corrected content to API
       const response = await fetch("/api/proxy", {
@@ -440,54 +497,126 @@ export function VoiceChat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: correctedContent,
-          history: messages.map(msg => ({ role: msg.role, content: msg.content }))
-        })
-      });
+          history: messages.map((msg) => ({ role: msg.role, content: msg.content })),
+        }),
+      })
 
-      if (!response.ok) throw new Error("Failed to get response");
+      if (!response.ok) throw new Error("Failed to get response")
 
-      const data = await response.json();
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        role: "assistant",
-        content: data.response,
-        timestamp: new Date(),
-        status: "delivered"
-      }]);
+      const data = await response.json()
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          role: "assistant",
+          content: data.response,
+          timestamp: new Date(),
+          status: "delivered",
+        },
+      ])
 
-      speakText(data.response);
+      speakText(data.response)
     } catch (error) {
-      console.error("Chat error:", error);
-      setMessages(prev => prev.map(msg =>
-        msg.id === String(Date.now())
-          ? { ...msg, status: "error", retries: (msg.retries || 0) + 1 }
-          : msg
-      ));
+      console.error("Chat error:", error)
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === String(Date.now()) ? { ...msg, status: "error", retries: (msg.retries || 0) + 1 } : msg,
+        ),
+      )
     } finally {
-      setIsProcessing(false);
+      setIsProcessing(false)
     }
-  };
+  }
 
   // Updated correctGrammar function
   const correctGrammar = async (text: string): Promise<string> => {
-    if (!text.trim()) return text;
+    if (!text.trim()) return text
 
     try {
       const response = await fetch("/api/correct-grammar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
-      });
+      })
 
-      if (!response.ok) throw new Error("Grammar correction failed");
+      if (!response.ok) throw new Error("Grammar correction failed")
 
-      const data = await response.json();
-      return data.corrected || text;
+      const data = await response.json()
+      return data.corrected || text
     } catch (error) {
-      console.error("Grammar correction error:", error);
-      return text;
+      console.error("Grammar correction error:", error)
+      return text
     }
-  };
+  }
+
+  const transcribeAudio = async (audioBlob: Blob, isRealTime: boolean) => {
+    const formData = new FormData()
+    formData.append("audio", audioBlob)
+    formData.append("language", "en-US")
+    formData.append("diarization", "true")
+    formData.append("sentiment", "true")
+    formData.append("keywords", "important,urgent,deadline,meeting")
+
+    try {
+      const response = await fetch("/api/transcribe", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) throw new Error("Transcription failed")
+
+      const data: EnhancedTranscription = await response.json()
+
+      // Update the UI with enhanced features
+      setSpeakerSegments(data.segments)
+      setOverallSentiment(data.sentiment.overall)
+
+      // Format the transcript with speaker information
+      const formattedTranscript = data.segments
+        .map((segment) => `Speaker ${segment.speaker}: ${segment.text}`)
+        .join("\n")
+
+      if (isRealTime) {
+        setInput((prev) => prev + " " + formattedTranscript)
+      } else {
+        setInput(formattedTranscript)
+      }
+
+      // Show sentiment information in toast
+      toast({
+        title: "Sentiment Analysis",
+        description: `Overall mood: ${data.sentiment.overall}`,
+      })
+    } catch (error) {
+      console.error("Transcription error:", error)
+      toast({
+        title: "Error",
+        description: "Failed to transcribe audio",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const SentimentIndicator = ({ sentiment }: { sentiment: string }) => {
+    const getEmoji = () => {
+      switch (sentiment.toLowerCase()) {
+        case "positive":
+          return "😊"
+        case "negative":
+          return "😔"
+        case "neutral":
+          return "😐"
+        default:
+          return "❓"
+      }
+    }
+
+    return (
+      <span className="inline-flex items-center gap-1 text-sm">
+        {getEmoji()} {sentiment}
+      </span>
+    )
+  }
 
   return (
     <Card className="w-full max-w-7xl mx-auto h-[calc(100vh-8rem)]">
@@ -499,7 +628,21 @@ export function VoiceChat() {
               <CardDescription>Chat with your Data</CardDescription>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            <WakeWordStatus isEnabled={isWakeWordEnabled} isListening={isWakeWordListening} />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setIsWakeWordEnabled(!isWakeWordEnabled)
+                toast({
+                  description: `Wake word detection ${isWakeWordEnabled ? "disabled" : "enabled"}`,
+                })
+              }}
+              className="text-xs"
+            >
+              {isWakeWordEnabled ? "Disable" : "Enable"} Wake Word
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -545,10 +688,16 @@ export function VoiceChat() {
                     className={`flex gap-3 ${message.role === "user" ? "flex-row-reverse" : ""}`}
                   >
                     <div
-                      className={`rounded-lg px-4 py-2 max-w-[85%] relative break-words whitespace-pre-wrap ${message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
-                        }`}
+                      className={`rounded-lg px-4 py-2 max-w-[85%] relative break-words whitespace-pre-wrap ${
+                        message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
+                      }`}
                     >
                       {message.content}
+                      {message.sentiment && (
+                        <div className="mt-2 text-xs opacity-70">
+                          <SentimentIndicator sentiment={message.sentiment} />
+                        </div>
+                      )}
                       {message.status === "error" && (
                         <Button
                           variant="ghost"
@@ -567,7 +716,7 @@ export function VoiceChat() {
           </ScrollArea>
 
           <div className="p-4 space-y-4 flex-shrink-0">
-          <KeyboardHint />
+            <KeyboardHint />
             {SAMPLE_QUESTIONS.length > 0 && (
               <div className="flex flex-wrap gap-2 justify-center">
                 {SAMPLE_QUESTIONS.map((question) => (
@@ -603,7 +752,7 @@ export function VoiceChat() {
                 {isRecording ? (
                   <motion.div
                     animate={{ scale: [1, 1.2, 1] }}
-                    transition={{ duration: 0.8, repeat: Infinity }}
+                    transition={{ duration: 0.8, repeat: Number.POSITIVE_INFINITY }}
                   >
                     <Square className="h-4 w-4" />
                   </motion.div>
@@ -624,9 +773,9 @@ export function VoiceChat() {
                   rows={1}
                   onKeyDown={(e) => {
                     // Allow new lines with Shift+Enter
-                    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-                      e.preventDefault();
-                      handleSubmit();
+                    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+                      e.preventDefault()
+                      handleSubmit()
                     }
                   }}
                   onInput={(e) => {
@@ -649,5 +798,65 @@ export function VoiceChat() {
       </CardContent>
     </Card>
   )
+}
+
+class WakeWordDetector {
+  private callback: () => void
+  private audioContext: AudioContext
+  private analyser: AnalyserNode
+  private scriptProcessor: ScriptProcessorNode
+  private wakeWord: string
+  private isRunning = false
+
+  constructor(wakeWord: string, callback: () => void) {
+    this.wakeWord = wakeWord
+    this.callback = callback
+    this.audioContext = new AudioContext()
+    this.analyser = this.audioContext.createAnalyser()
+    this.scriptProcessor = this.audioContext.createScriptProcessor(2048, 1, 1)
+  }
+
+  start() {
+    if (this.isRunning) return
+    this.isRunning = true
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        const source = this.audioContext.createMediaStreamSource(stream)
+        source.connect(this.analyser)
+        this.analyser.connect(this.scriptProcessor)
+        this.scriptProcessor.connect(this.audioContext.destination)
+
+        this.scriptProcessor.onaudioprocess = (e) => {
+          const data = e.inputBuffer.getChannelData(0)
+          const wakeWordDetected = this.detectWakeWord(data)
+          if (wakeWordDetected) {
+            this.callback()
+          }
+        }
+      })
+      .catch((err) => console.error("Error accessing microphone:", err))
+  }
+
+  stop() {
+    this.isRunning = false
+    this.scriptProcessor.disconnect()
+    this.analyser.disconnect()
+    this.audioContext.close()
+  }
+
+  private detectWakeWord(data: Float32Array): boolean {
+    // Replace this with your actual wake word detection logic
+    // This is a placeholder, it always returns false
+    const wakeWordLower = this.wakeWord.toLowerCase()
+    const inputString = this.convertAudioToText(data)
+    return inputString.toLowerCase().includes(wakeWordLower)
+  }
+
+  private convertAudioToText(data: Float32Array): string {
+    // Replace this with your actual audio-to-text conversion logic
+    // This is a placeholder, it returns an empty string
+    return ""
+  }
 }
 
